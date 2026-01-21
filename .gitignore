@@ -21,4 +21,3 @@ uploads/
 *.log
 
 # Config with secrets
-config.yaml
