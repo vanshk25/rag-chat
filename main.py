@@ -45,7 +45,6 @@ UPLOAD_PATH.mkdir(exist_ok=True)
 class QueryRequest(BaseModel):
     query: str
     collection_name: str
-    k: Optional[int] = None
 
 
 
