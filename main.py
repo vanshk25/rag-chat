@@ -48,9 +48,28 @@ class QueryRequest(BaseModel):
     k: Optional[int] = None
 
 
+
+class ChatRequest(BaseModel):
+    prompt: str
+
+class ChatResponse(BaseModel):
+    answer: str
+
 class QueryResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]]
+
+@app.post("/chat", response_model=ChatResponse)
+def chat_with_llm(request: ChatRequest):
+    """Chat directly with the LLM (no retrieval)."""
+    try:
+        answer = llm.generate(prompt=request.prompt)
+        return ChatResponse(answer=answer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# To run the app on port 54161, use:
+# uvicorn main:app --reload --port 54161
 
 
 @app.post("/ingest")
