@@ -76,8 +76,12 @@ if CHAT_HISTORY_DB_URL:
     try:
         CHAT_HISTORY_CONN = psycopg.connect(CHAT_HISTORY_DB_URL)
         PostgresChatMessageHistory.create_tables(CHAT_HISTORY_CONN, CHAT_HISTORY_TABLE)
-    except Exception:
+        print("[chat_history] Connected to Postgres and ensured table '%s'" % CHAT_HISTORY_TABLE)
+    except Exception as e:
         CHAT_HISTORY_CONN = None
+        print("[chat_history] Failed to connect to Postgres: %s" % e)
+else:
+    print("[chat_history] POSTGRES_CHAT_HISTORY_URL not set; chat history is disabled")
 
 
 class QueryRequest(BaseModel):
