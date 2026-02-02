@@ -25,12 +25,7 @@ from config_loader import (
 )
 
 load_dotenv()
-
 tags_metadata = [
-    {
-        "name": "Chat",
-        "description": "Direct LLM chat endpoints (no retrieval).",
-    },
     {
         "name": "Ingestion",
         "description": "Upload and ingest documents into vector collections.",
@@ -47,6 +42,10 @@ tags_metadata = [
         "name": "Sessions",
         "description": "Inspect conversation sessions and their histories.",
     },
+    {
+        "name": "Debug",
+        "description": "Debug and testing endpoints.",
+    },
 ]
 
 app = FastAPI(title="Baker Triangle", version="1.0.0", openapi_tags=tags_metadata)
@@ -55,14 +54,10 @@ app = FastAPI(title="Baker Triangle", version="1.0.0", openapi_tags=tags_metadat
 db = ChromaVectorDB(persist_directory=CHROMA_DB_PATH)
 db.set_embedding(get_embedding_model())
 
-        {
-            "name": "Debug",
-            "description": "Debug and testing endpoints.",
-        },
-        {
-            "name": "Chat",
-            "description": "Direct LLM chat endpoints (no retrieval).",
-        },
+# Initialize LLM
+llm = OpenAICompatibleLLM(
+    model=LLM_MODEL,
+    base_url=LLM_BASE_URL,
     api_key=LLM_API_KEY,
     temperature=LLM_TEMPERATURE,
     max_tokens=LLM_MAX_TOKENS,
@@ -102,8 +97,6 @@ class QueryResponse(BaseModel):
     answer: str
     session_id: str
 
-
-@app.post("/chat", response_model=ChatResponse, tags=["Chat"])
 @app.post("/chat", response_model=ChatResponse, tags=["Debug"])
 def chat_with_llm(request: ChatRequest):
     """Chat directly with the LLM (no retrieval)."""
