@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 import shutil
 import os
 from pathlib import Path
@@ -103,7 +103,6 @@ def query_documents(request: QueryRequest):
             vector_db=db,
             query=request.query,
             collection_name=request.collection_name,
-            k=request.k,
         )
 
         context = [doc.page_content for doc in results]
