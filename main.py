@@ -95,6 +95,41 @@ async def ingest_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/ingest-multiple")
+async def ingest_multiple_files(
+    collection_name: str,
+    files: List[UploadFile] = File(...),
+):
+    """Upload and ingest multiple files into a collection in a single request."""
+    try:
+        total_chunks = 0
+        file_summaries = []
+
+        for file in files:
+            file_path = UPLOAD_PATH / file.filename
+            with open(file_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+
+            num_chunks = ingest(
+                vector_db=db,
+                collection_name=collection_name,
+                source=str(file_path),
+            )
+
+            os.remove(file_path)
+
+            total_chunks += num_chunks
+            file_summaries.append({"filename": file.filename, "chunks": num_chunks})
+
+        return {
+            "message": "Files ingested successfully",
+            "total_chunks": total_chunks,
+            "files": file_summaries,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest):
     """Query documents and get an LLM-generated response."""
@@ -122,6 +157,16 @@ def query_documents(request: QueryRequest):
 def list_collections():
     """List all available collections."""
     return {"collections": db.list_collections()}
+
+
+@app.get("/collections/{collection_name}/documents")
+def list_documents_in_collection(collection_name: str):
+    """List all documents stored in a specific collection."""
+    try:
+        documents = db.list_documents(collection_name)
+        return {"collection": collection_name, "documents": documents}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/collections/{collection_name}")

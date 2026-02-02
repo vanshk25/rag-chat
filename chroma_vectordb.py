@@ -89,3 +89,24 @@ class ChromaVectorDB(BaseVectorDB):
     def list_collections(self) -> List[str]:
         """List all collections in the database."""
         return [col.name for col in self.client.list_collections()]
+
+    def list_documents(self, collection_name: str) -> List[Dict[str, Any]]:
+        """List all documents (ids, content, metadata) in a collection."""
+        collection = self.client.get_or_create_collection(name=collection_name)
+        results = collection.get()
+
+        documents: List[Dict[str, Any]] = []
+        ids = results.get("ids", [])
+        contents = results.get("documents", [])
+        metadatas = results.get("metadatas", [])
+
+        for i in range(len(ids)):
+            documents.append(
+                {
+                    "id": ids[i],
+                    "content": contents[i] if i < len(contents) else None,
+                    "metadata": metadatas[i] if i < len(metadatas) else None,
+                }
+            )
+
+        return documents
