@@ -112,6 +112,19 @@ class ChromaVectorDB(BaseVectorDB):
         return documents
 
     def delete_document(self, collection_name: str, document_id: str) -> None:
-        """Delete a single document from the specified collection by id."""
-        vectorstore = self.get_or_create_collection(collection_name)
-        vectorstore.delete(ids=[document_id])
+        """Delete all chunks belonging to a logical document from a collection.
+
+        The document_id corresponds to the "document_id" field stored in metadata
+        for all chunks of an uploaded file.
+        """
+        collection = self.client.get_or_create_collection(name=collection_name)
+
+        # Try to delete by logical document_id stored in metadata
+        results = collection.get(where={"document_id": document_id})
+        ids = results.get("ids") if results else None
+
+        # Fallback: treat document_id as a single chunk id if no matches
+        if not ids:
+            ids = [document_id]
+
+        collection.delete(ids=ids)

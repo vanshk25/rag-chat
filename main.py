@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Dict, Any, List
+from uuid import uuid4
 import shutil
 import os
 from pathlib import Path
@@ -78,6 +79,7 @@ async def ingest_file(
 ):
     """Upload and ingest a file into a collection."""
     try:
+        document_id = str(uuid4())
         file_path = UPLOAD_PATH / file.filename
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
@@ -89,12 +91,17 @@ async def ingest_file(
             metadata={
                 "source": str(file_path),
                 "file_name": file.filename,
+                "document_id": document_id,
             },
         )
 
         os.remove(file_path)
 
-        return {"message": "File ingested successfully", "chunks": num_chunks}
+        return {
+            "message": "File ingested successfully",
+            "chunks": num_chunks,
+            "document_id": document_id,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -110,6 +117,7 @@ async def ingest_multiple_files(
         file_summaries = []
 
         for file in files:
+            document_id = str(uuid4())
             file_path = UPLOAD_PATH / file.filename
             with open(file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
@@ -121,13 +129,20 @@ async def ingest_multiple_files(
                 metadata={
                     "source": str(file_path),
                     "file_name": file.filename,
+                    "document_id": document_id,
                 },
             )
 
             os.remove(file_path)
 
             total_chunks += num_chunks
-            file_summaries.append({"filename": file.filename, "chunks": num_chunks})
+            file_summaries.append(
+                {
+                    "filename": file.filename,
+                    "chunks": num_chunks,
+                    "document_id": document_id,
+                }
+            )
 
         return {
             "message": "Files ingested successfully",
@@ -169,23 +184,31 @@ def list_collections():
 
 @app.get("/collections/{collection_name}/documents")
 def list_documents_in_collection(collection_name: str):
-    """List document ids and names for a specific collection."""
+    """List unique documents (grouped over chunks) in a collection."""
     try:
         raw_documents = db.list_documents(collection_name)
 
-        documents: List[Dict[str, Any]] = []
+        grouped: Dict[str, Dict[str, Any]] = {}
+
         for doc in raw_documents:
-            doc_id = doc.get("id")
             metadata = doc.get("metadata") or {}
+            logical_id = metadata.get("document_id")
+
+            # Fallback for older data without document_id: group by file name
             source = (
                 metadata.get("source")
                 or metadata.get("file_name")
                 or metadata.get("filename")
             )
+            name = Path(source).name if source else logical_id or doc.get("id")
 
-            name = Path(source).name if source else doc_id
+            if logical_id is None:
+                logical_id = name
 
-            documents.append({"id": doc_id, "name": name})
+            if logical_id not in grouped:
+                grouped[logical_id] = {"id": logical_id, "name": name}
+
+        documents = list(grouped.values())
 
         return {"collection": collection_name, "documents": documents}
     except Exception as e:
