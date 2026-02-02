@@ -1,12 +1,14 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from uuid import uuid4
 import shutil
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langchain_postgres import PostgresChatMessageHistory
+import psycopg
 
 from chroma_vectordb import ChromaVectorDB
 from openai_llm import OpenAICompatibleLLM
@@ -24,16 +26,43 @@ from config_loader import (
 
 load_dotenv()
 
-app = FastAPI(title="RAG API", version="1.0.0")
+tags_metadata = [
+    {
+        "name": "Chat",
+        "description": "Direct LLM chat endpoints (no retrieval).",
+    },
+    {
+        "name": "Ingestion",
+        "description": "Upload and ingest documents into vector collections.",
+    },
+    {
+        "name": "Query",
+        "description": "RAG query endpoints using retrieval + LLM + memory.",
+    },
+    {
+        "name": "Collections",
+        "description": "Manage and inspect document collections.",
+    },
+    {
+        "name": "Sessions",
+        "description": "Inspect conversation sessions and their histories.",
+    },
+]
+
+app = FastAPI(title="Baker Triangle", version="1.0.0", openapi_tags=tags_metadata)
 
 # Initialize vector database and embeddings
 db = ChromaVectorDB(persist_directory=CHROMA_DB_PATH)
 db.set_embedding(get_embedding_model())
 
-# Initialize LLM
-llm = OpenAICompatibleLLM(
-    model=LLM_MODEL,
-    base_url=LLM_BASE_URL,
+        {
+            "name": "Debug",
+            "description": "Debug and testing endpoints.",
+        },
+        {
+            "name": "Chat",
+            "description": "Direct LLM chat endpoints (no retrieval).",
+        },
     api_key=LLM_API_KEY,
     temperature=LLM_TEMPERATURE,
     max_tokens=LLM_MAX_TOKENS,
@@ -43,9 +72,23 @@ UPLOAD_PATH = Path(UPLOAD_DIR)
 UPLOAD_PATH.mkdir(exist_ok=True)
 
 
+# Initialize Postgres chat history connection (optional)
+CHAT_HISTORY_DB_URL = os.getenv("POSTGRES_CHAT_HISTORY_URL")
+CHAT_HISTORY_TABLE = os.getenv("POSTGRES_CHAT_HISTORY_TABLE", "chat_history")
+CHAT_HISTORY_CONN = None
+
+if CHAT_HISTORY_DB_URL:
+    try:
+        CHAT_HISTORY_CONN = psycopg.connect(CHAT_HISTORY_DB_URL)
+        PostgresChatMessageHistory.create_tables(CHAT_HISTORY_CONN, CHAT_HISTORY_TABLE)
+    except Exception:
+        CHAT_HISTORY_CONN = None
+
+
 class QueryRequest(BaseModel):
     query: str
     collection_name: str
+    session_id: Optional[str] = None
 
 
 
@@ -57,9 +100,11 @@ class ChatResponse(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[Dict[str, Any]]
+    session_id: str
 
-@app.post("/chat", response_model=ChatResponse)
+
+@app.post("/chat", response_model=ChatResponse, tags=["Chat"])
+@app.post("/chat", response_model=ChatResponse, tags=["Debug"])
 def chat_with_llm(request: ChatRequest):
     """Chat directly with the LLM (no retrieval)."""
     try:
@@ -72,7 +117,7 @@ def chat_with_llm(request: ChatRequest):
 # uvicorn main:app --reload --port 54161
 
 
-@app.post("/ingest")
+@app.post("/ingest", tags=["Ingestion"])
 async def ingest_file(
     collection_name: str,
     file: UploadFile = File(...),
@@ -106,7 +151,7 @@ async def ingest_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ingest-multiple")
+@app.post("/ingest-multiple", tags=["Ingestion"])
 async def ingest_multiple_files(
     collection_name: str,
     files: List[UploadFile] = File(...),
@@ -153,36 +198,69 @@ async def ingest_multiple_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/query", response_model=QueryResponse)
-def query_documents(request: QueryRequest):
-    """Query documents and get an LLM-generated response."""
+@app.post("/query", response_model=QueryResponse, tags=["Query"])
+def query_documents(
+    query: str,
+    collection_name: str,
+    session_id: Optional[str] = None,
+):
+    """Query documents and get an LLM-generated response.
+
+    Parameters are exposed as separate fields in the docs UI.
+    """
     try:
+        # Resolve or create session id
+        session_id = session_id or str(uuid4())
+
+        # Initialize Postgres-backed chat history if configured
+        history = None
+        if CHAT_HISTORY_CONN is not None:
+            history = PostgresChatMessageHistory(
+                CHAT_HISTORY_TABLE,
+                session_id,
+                sync_connection=CHAT_HISTORY_CONN,
+            )
+
         results = retrieve(
             vector_db=db,
-            query=request.query,
-            collection_name=request.collection_name,
+            query=query,
+            collection_name=collection_name,
         )
 
+        # Build context from retrieved docs
         context = [doc.page_content for doc in results]
-        answer = llm.generate_with_context(query=request.query, context=context)
 
-        sources = [
-            {"content": doc.page_content, "metadata": doc.metadata}
-            for doc in results
-        ]
+        # Prepend chat history as additional context if available
+        if history is not None:
+            messages = history.messages
+            recent = messages[-10:]
+            if recent:
+                history_lines = []
+                for m in recent:
+                    role = "user" if m.type == "human" else "assistant" if m.type == "ai" else m.type
+                    history_lines.append(f"{role}: {m.content}")
+                history_text = "Chat history:\n" + "\n".join(history_lines)
+                context.insert(0, history_text)
 
-        return QueryResponse(answer=answer, sources=sources)
+        answer = llm.generate_with_context(query=query, context=context)
+
+        # Persist this turn in history
+        if history is not None:
+            history.add_user_message(query)
+            history.add_ai_message(answer)
+
+        return QueryResponse(answer=answer, session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/collections")
+@app.get("/collections", tags=["Collections"])
 def list_collections():
     """List all available collections."""
     return {"collections": db.list_collections()}
 
 
-@app.get("/collections/{collection_name}/documents")
+@app.get("/collections/{collection_name}/documents", tags=["Collections"])
 def list_documents_in_collection(collection_name: str):
     """List unique documents (grouped over chunks) in a collection."""
     try:
@@ -215,7 +293,7 @@ def list_documents_in_collection(collection_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/collections/{collection_name}")
+@app.delete("/collections/{collection_name}", tags=["Collections"])
 def delete_collection(collection_name: str):
     """Delete a collection."""
     try:
@@ -225,7 +303,39 @@ def delete_collection(collection_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/collections/{collection_name}/documents/{document_id}")
+@app.get("/sessions/{session_id}/history", tags=["Sessions"])
+def get_session_history(session_id: str):
+    """Return the chat history for a given session id."""
+    if CHAT_HISTORY_CONN is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Chat history storage is not configured.",
+        )
+
+    try:
+        history = PostgresChatMessageHistory(
+            CHAT_HISTORY_TABLE,
+            session_id,
+            sync_connection=CHAT_HISTORY_CONN,
+        )
+
+        messages = []
+        for m in history.messages:
+            if m.type in ("human", "user"):
+                role = "user"
+            elif m.type in ("ai", "assistant"):
+                role = "assistant"
+            else:
+                role = m.type
+
+            messages.append({"role": role, "content": m.content})
+
+        return {"session_id": session_id, "messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/collections/{collection_name}/documents/{document_id}", tags=["Collections"])
 def delete_document_from_collection(collection_name: str, document_id: str):
     """Delete a single document from a collection by its id."""
     try:
