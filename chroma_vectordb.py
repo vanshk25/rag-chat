@@ -110,3 +110,8 @@ class ChromaVectorDB(BaseVectorDB):
             )
 
         return documents
+
+    def delete_document(self, collection_name: str, document_id: str) -> None:
+        """Delete a single document from the specified collection by id."""
+        vectorstore = self.get_or_create_collection(collection_name)
+        vectorstore.delete(ids=[document_id])

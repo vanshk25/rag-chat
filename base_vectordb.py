@@ -39,3 +39,8 @@ class BaseVectorDB(ABC):
     def list_documents(self, collection_name: str) -> List[Any]:
         """List all documents in the specified collection."""
         pass
+
+    @abstractmethod
+    def delete_document(self, collection_name: str, document_id: str) -> None:
+        """Delete a single document from the specified collection."""
+        pass

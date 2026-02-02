@@ -86,6 +86,10 @@ async def ingest_file(
             vector_db=db,
             collection_name=collection_name,
             source=str(file_path),
+            metadata={
+                "source": str(file_path),
+                "file_name": file.filename,
+            },
         )
 
         os.remove(file_path)
@@ -114,6 +118,10 @@ async def ingest_multiple_files(
                 vector_db=db,
                 collection_name=collection_name,
                 source=str(file_path),
+                metadata={
+                    "source": str(file_path),
+                    "file_name": file.filename,
+                },
             )
 
             os.remove(file_path)
@@ -161,9 +169,24 @@ def list_collections():
 
 @app.get("/collections/{collection_name}/documents")
 def list_documents_in_collection(collection_name: str):
-    """List all documents stored in a specific collection."""
+    """List document ids and names for a specific collection."""
     try:
-        documents = db.list_documents(collection_name)
+        raw_documents = db.list_documents(collection_name)
+
+        documents: List[Dict[str, Any]] = []
+        for doc in raw_documents:
+            doc_id = doc.get("id")
+            metadata = doc.get("metadata") or {}
+            source = (
+                metadata.get("source")
+                or metadata.get("file_name")
+                or metadata.get("filename")
+            )
+
+            name = Path(source).name if source else doc_id
+
+            documents.append({"id": doc_id, "name": name})
+
         return {"collection": collection_name, "documents": documents}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -175,5 +198,17 @@ def delete_collection(collection_name: str):
     try:
         db.delete_collection(collection_name)
         return {"message": f"Collection '{collection_name}' deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/collections/{collection_name}/documents/{document_id}")
+def delete_document_from_collection(collection_name: str, document_id: str):
+    """Delete a single document from a collection by its id."""
+    try:
+        db.delete_document(collection_name, document_id)
+        return {
+            "message": f"Document '{document_id}' deleted from collection '{collection_name}'"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
