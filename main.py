@@ -67,27 +67,36 @@ UPLOAD_PATH = Path(UPLOAD_DIR)
 UPLOAD_PATH.mkdir(exist_ok=True)
 
 
-# Initialize Postgres chat history connection (optional)
+
+# Initialize Postgres chat history connection (with debugging)
+
+
 CHAT_HISTORY_DB_URL = os.getenv("POSTGRES_CHAT_HISTORY_URL")
 CHAT_HISTORY_TABLE = os.getenv("POSTGRES_CHAT_HISTORY_TABLE", "chat_history")
 CHAT_HISTORY_CONN = None
 
-if CHAT_HISTORY_DB_URL:
+def connect_postgres():
+    global CHAT_HISTORY_CONN
     try:
         CHAT_HISTORY_CONN = psycopg.connect(CHAT_HISTORY_DB_URL)
         PostgresChatMessageHistory.create_tables(CHAT_HISTORY_CONN, CHAT_HISTORY_TABLE)
-        print("[chat_history] Connected to Postgres and ensured table '%s'" % CHAT_HISTORY_TABLE)
+        # ...existing code...
     except Exception as e:
         CHAT_HISTORY_CONN = None
-        print("[chat_history] Failed to connect to Postgres: %s" % e)
+        # ...existing code...
+
+if CHAT_HISTORY_DB_URL:
+    connect_postgres()
 else:
-    print("[chat_history] POSTGRES_CHAT_HISTORY_URL not set; chat history is disabled")
+    pass
+
 
 
 class QueryRequest(BaseModel):
     query: str
     collection_name: str
     session_id: Optional[str] = None
+    document_name: Optional[str] = None
 
 
 
@@ -200,6 +209,7 @@ def query_documents(
     query: str,
     collection_name: str,
     session_id: Optional[str] = None,
+    document_name: Optional[str] = None,
 ):
     """Query documents and get an LLM-generated response.
 
@@ -211,18 +221,71 @@ def query_documents(
 
         # Initialize Postgres-backed chat history if configured
         history = None
-        if CHAT_HISTORY_CONN is not None:
-            history = PostgresChatMessageHistory(
-                CHAT_HISTORY_TABLE,
-                session_id,
-                sync_connection=CHAT_HISTORY_CONN,
+        if CHAT_HISTORY_DB_URL:
+            try:
+                if CHAT_HISTORY_CONN is None or CHAT_HISTORY_CONN.closed:
+                    connect_postgres()
+                history = PostgresChatMessageHistory(
+                    CHAT_HISTORY_TABLE,
+                    session_id,
+                    sync_connection=CHAT_HISTORY_CONN,
+                )
+            except Exception as e:
+                history = None
+
+
+        if document_name:
+            # Map document name to document_id using collection listing logic
+            raw_documents = db.list_documents(collection_name)
+            doc_id = None
+            for doc in raw_documents:
+                meta = doc.get('metadata') or {}
+                source = (
+                    meta.get('source')
+                    or meta.get('file_name')
+                    or meta.get('filename')
+                )
+                name = None
+                if source:
+                    from pathlib import Path
+                    name = Path(source).name
+                if name and document_name == name:
+                    doc_id = meta.get('document_id') or name
+                    break
+            # Fetch all chunks for the document_id
+            chunks = []
+            for doc in raw_documents:
+                meta = doc.get('metadata') or {}
+                logical_id = meta.get('document_id') or None
+                if logical_id == doc_id:
+                    # Convert to LangChain Document if needed
+                    if hasattr(doc, 'page_content'):
+                        chunks.append(doc)
+                    else:
+                        from langchain_core.documents import Document
+                        chunks.append(Document(page_content=doc.get('content', ''), metadata=meta))
+            # Perform similarity search over these chunks
+            if chunks:
+                embeddings = db.embedding_function
+                query_emb = embeddings.embed_query(query)
+                scored = []
+                for chunk in chunks:
+                    chunk_emb = embeddings.embed_documents([chunk.page_content])[0]
+                    # Cosine similarity
+                    import numpy as np
+                    sim = np.dot(query_emb, chunk_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(chunk_emb))
+                    scored.append((sim, chunk))
+                scored.sort(reverse=True, key=lambda x: x[0])
+                results = [x[1] for x in scored[:5]]  # Top 5
+            else:
+                results = []
+        else:
+            results = retrieve(
+                vector_db=db,
+                query=query,
+                collection_name=collection_name,
             )
 
-        results = retrieve(
-            vector_db=db,
-            query=query,
-            collection_name=collection_name,
-        )
 
         # Build context from retrieved docs
         context = [doc.page_content for doc in results]
