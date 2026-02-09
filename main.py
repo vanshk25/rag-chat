@@ -80,10 +80,9 @@ def connect_postgres():
     try:
         CHAT_HISTORY_CONN = psycopg.connect(CHAT_HISTORY_DB_URL)
         PostgresChatMessageHistory.create_tables(CHAT_HISTORY_CONN, CHAT_HISTORY_TABLE)
-        # ...existing code...
     except Exception as e:
         CHAT_HISTORY_CONN = None
-        # ...existing code...
+
 
 if CHAT_HISTORY_DB_URL:
     connect_postgres()
