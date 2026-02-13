@@ -114,6 +114,12 @@ def chat_with_llm(request: ChatRequest):
     """Chat directly with the LLM (no retrieval)."""
     try:
         answer = llm.generate(prompt=request.prompt)
+        # Remove text from <think> to </think>, return only what is after </think>
+        if answer is not None:
+            end_tag = '</think>'
+            idx = answer.find(end_tag)
+            if idx != -1:
+                answer = answer[idx + len(end_tag):].lstrip()
         return ChatResponse(answer=answer)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -302,6 +308,12 @@ def query_documents(
                 context.insert(0, history_text)
 
         answer = llm.generate_with_context(query=query, context=context)
+        # Remove text from <think> to </think>, return only what is after </think>
+        if answer is not None:
+            end_tag = '</think>'
+            idx = answer.find(end_tag)
+            if idx != -1:
+                answer = answer[idx + len(end_tag):].lstrip()
 
         # Persist this turn in history
         if history is not None:
