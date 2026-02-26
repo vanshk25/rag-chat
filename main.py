@@ -80,14 +80,30 @@ def connect_postgres():
     try:
         CHAT_HISTORY_CONN = psycopg.connect(CHAT_HISTORY_DB_URL)
         PostgresChatMessageHistory.create_tables(CHAT_HISTORY_CONN, CHAT_HISTORY_TABLE)
+        print("[OK] PostgreSQL connected successfully")
     except Exception as e:
         CHAT_HISTORY_CONN = None
+        print(f"[ERROR] PostgreSQL connection failed: {e}")
+
+
+@app.on_event("startup")
+def startup_checks():
+    print("\n========== Startup Connection Checks ==========")
+
+    if not CHAT_HISTORY_DB_URL:
+        print("[WARN] POSTGRES_CHAT_HISTORY_URL not set — chat history disabled")
+    elif CHAT_HISTORY_CONN is None or CHAT_HISTORY_CONN.closed:
+        print("[ERROR] PostgreSQL is not connected — chat history unavailable")
+    else:
+        print("[OK] PostgreSQL connection is active")
+
+    print("================================================\n")
 
 
 if CHAT_HISTORY_DB_URL:
     connect_postgres()
 else:
-    pass
+    print("[WARN] POSTGRES_CHAT_HISTORY_URL not set — skipping PostgreSQL connection")
 
 
 
