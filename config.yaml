@@ -10,7 +10,7 @@ storage:
   upload_dir: "./uploads"
 
 llm:
-  model: "qwen3-8b-fp8"
+  model: "qwen3-8b"
   base_url: "http://127.0.0.1:30080/v1"
   api_key: "gpustack_55b12bdd53ee1729_059017599868ede100ae737126577a03"
   temperature: 0.7
